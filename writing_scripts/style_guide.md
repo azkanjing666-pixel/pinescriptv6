@@ -210,19 +210,41 @@ plot(close,  color  =  color.red)
 
 ## [Line  wrapping](https://www.tradingview.com/pine-script-docs/writing/style-guide/#line-wrapping)
 
-Line wrapping can make long lines easier to read. Line wraps are defined by using an indentation level that is not a multiple of four, as four spaces or a tab are used to define local blocks. Here we use two spaces:
+Line wrapping can make long lines of code easier to read by defining a single line of code across multiple lines in the script.
+
+Generally, scripts can wrap lines using any indentation length that is not a multiple of four, because four spaces or a tab define local blocks in Pine.
+
+However, if a wrapped line is enclosed in parentheses, such as in function calls, arithmetic expressions, or parameter declarations, it can use any indentation length without restriction, including multiples of four.
+
+For example:
 
 [Pine Script®](https://tradingview.com/pine-script-docs)
 
 Copied
 
-`plot(  
-series  =  close,  
-title  =  "Close",  
-color  =  color.blue,  
-show_last  =  10  
+`//@version=6  
+indicator("Line wrapping demo")  
+  
+// A wrapped line that is *not* enclosed in parentheses can use any indentation  
+// length *except* a multiple of four.  
+float  closeDiff  =  close  
+  -  close[1]  
+  
+// A wrapped line that *is* enclosed in parentheses *can* use four-space indentation.  
+float  percentChange  =  (  
+    closeDiff  
+    /  close[1]  *  100  
+)  
+  
+plot(  
+    percentChange,  
+ title  =  "Percent change",  
+   color  =  percentChange  >=  0  ?  color.green  :  color.red,  
+        linewidth  =  8  
 )  
 `
+
+It is possible to mix several wrapping styles in the same script, but keeping a consistent approach within the same file usually makes the code easier to scan and maintain.
 
 ## [Vertical  alignment](https://www.tradingview.com/pine-script-docs/writing/style-guide/#vertical-alignment)
 

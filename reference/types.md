@@ -137,7 +137,38 @@ plot(f)
 ---
 
 ## footprint
-A keyword that explicitly declares the type of a variable or parameter as footprint. Scripts create objects of the footprint type by calling the request.footprint() function. Scripts can use IDs of this type with the built-in footprint.*() functions to retrieve volume footprint data, including footprint rows, categorized volume sums, and volume delta.
+A keyword that explicitly declares the type of a variable or parameter as footprint. Scripts create objects of this type by calling `request.footprint()`.
+
+### Remarks
+Scripts can use `footprint` IDs with the built-in `footprint.*()` functions to retrieve:
+
+- overall footprint values such as buy volume, sell volume, and delta
+- row references such as the Point of Control (`poc()`) and Value Area boundaries (`vah()` / `val()`)
+- row-by-row volume information through returned `volume_row` IDs
+
+### Code Example
+```pine
+//@version=6
+indicator("Footprint summary")
+
+footprint fp = request.footprint(100, 70)
+
+if not na(fp)
+    float buyVolume = fp.buy_volume()
+    float sellVolume = fp.sell_volume()
+    float deltaVolume = fp.delta()
+    volume_row pocRow = fp.poc()
+    label.new(bar_index, high, str.format("Buy: {0}\nSell: {1}\nDelta: {2}\nPOC high: {3}", buyVolume, sellVolume, deltaVolume, pocRow.up_price()))
+```
+
+---
+
+## volume_row
+
+A keyword that explicitly declares the type of a variable or parameter as `volume_row`. Scripts obtain objects of this type from `footprint` instances, such as from `poc()`, `vah()`, and `val()`.
+
+### Remarks
+Scripts can use `volume_row` IDs with the built-in `volume_row.*()` functions to retrieve row boundaries, inspect row-level imbalance flags, and work with the volume information for an individual footprint row.
 
 
 ## int
