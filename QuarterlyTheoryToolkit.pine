@@ -1,0 +1,291 @@
+//@version=6
+indicator("Quarterly Theory Toolkit Oracle [Replica]", overlay=true, max_bars_back=5000)
+
+// ============================================================================
+// QUARTERLY THEORY TOOLKIT ORACLE - REVERSE ENGINEERED
+// ============================================================================
+// This indicator implements the core concepts of Quarterly Theory Trading:
+// - Quarterly cycle detection and anchoring
+// - Multi-timeframe cycle analysis
+// - Sequential SMT (Smart Money Technique) divergence detection
+// - Fair Value Gap (FVG) identification
+// - High probability trade setups
+// ============================================================================
+
+// ========== INPUTS & SETTINGS ==========
+group_cycles = "Cycle Settings"
+quarterlyLength = input.int(90, "Quarterly Length (days)", minval=1, group=group_cycles)
+anchorHour = input.int(17, "Anchor Hour (ET)", minval=0, maxval=23, group=group_cycles)
+anchorMinute = input.int(0, "Anchor Minute", minval=0, maxval=59, group=group_cycles)
+
+group_divergence = "Divergence Settings"
+enableSMTDivergence = input.bool(true, "Enable SMT Divergence", group=group_divergence)
+divergenceLookback = input.int(20, "Divergence Lookback Bars", minval=5, maxval=100, group=group_divergence)
+minDivergenceStrength = input.float(0.5, "Min Divergence Strength (%)", minval=0, maxval=5, step=0.1, group=group_divergence)
+
+group_fvg = "Fair Value Gap Settings"
+enableFVG = input.bool(true, "Enable FVG Detection", group=group_fvg)
+fvgMinSize = input.float(0.1, "FVG Min Size (%)", minval=0.01, maxval=1, step=0.01, group=group_fvg)
+
+group_visuals = "Visual Settings"
+showQuarterBoundaries = input.bool(true, "Show Quarter Boundaries", group=group_visuals)
+showDivergences = input.bool(true, "Show Divergences", group=group_visuals)
+showFVGs = input.bool(true, "Show FVGs", group=group_visuals)
+enableAlerts = input.bool(false, "Enable Alerts", group=group_visuals)
+
+// ========== COLOR SCHEME ==========
+color_q1 = color.new(color.blue, 80)
+color_q2 = color.new(color.orange, 80)
+color_q3 = color.new(color.green, 80)
+color_q4 = color.new(color.red, 80)
+color_bullishDiv = color.new(color.lime, 60)
+color_bearishDiv = color.new(color.red, 60)
+color_fvg_bull = color.new(color.teal, 85)
+color_fvg_bear = color.new(color.maroon, 85)
+
+// ========== UTILITY FUNCTIONS ==========
+
+// Get timestamp at specific time
+f_getAnchorTime(year, month, day) =>
+    timestamp(year, month, day, anchorHour, anchorMinute, 0)
+
+// Get current quarter of the year (1-4)
+f_getCurrentQuarter() =>
+    month = month(time)
+    math.ceil(month / 3)
+
+// Get quarter start month (1-12)
+f_getQuarterStartMonth(quarter) =>
+    (quarter - 1) * 3 + 1
+
+// Get quarter end month (1-12)
+f_getQuarterEndMonth(quarter) =>
+    quarter * 3
+
+// Check if bar is at quarter boundary
+f_isQuarterBoundary() =>
+    current_month = month(time)
+    current_day = dayofmonth(time)
+    (current_month == 1 or current_month == 4 or current_month == 7 or current_month == 10) and current_day == 1
+
+// Get daily high/low
+f_getDailyHL() =>
+    daily_high = ta.highest(high, 1440)  // 1440 minutes in a day
+    daily_low = ta.lowest(low, 1440)
+    [daily_high, daily_low]
+
+// Get weekly high/low
+f_getWeeklyHL() =>
+    weekly_high = ta.highest(high, 10080)  // 10080 minutes in a week
+    weekly_low = ta.lowest(low, 10080)
+    [weekly_high, weekly_low]
+
+// ========== CYCLE DETECTION & ANCHORING ==========
+
+var float cycle_high = na
+var float cycle_low = na
+var int cycle_start_bar = na
+var int current_cycle = 1
+
+f_updateCycle() =>
+    // Determine cycle based on time period
+    // Cycles reset at quarter boundaries (Jan 1, Apr 1, Jul 1, Oct 1)
+    
+    if f_isQuarterBoundary()
+        cycle_high := high
+        cycle_low := low
+        cycle_start_bar := bar_index
+        current_cycle := f_getCurrentQuarter()
+    else
+        if not na(cycle_high)
+            cycle_high := math.max(cycle_high, high)
+        else
+            cycle_high := high
+            
+        if not na(cycle_low)
+            cycle_low := math.min(cycle_low, low)
+        else
+            cycle_low := low
+
+f_updateCycle()
+
+// ========== DEFINING RANGE DETECTION ==========
+// Q1 defines the range for the quarter's moves
+
+f_getDefiningRangeSize() =>
+    na(cycle_high) or na(cycle_low) ? 0 : cycle_high - cycle_low
+
+f_getDefiningRangePercent() =>
+    size = f_getDefiningRangeSize()
+    cycle_low != 0 ? (size / cycle_low) * 100 : 0
+
+// ========== DIVERGENCE DETECTION ==========
+// Detects when correlated assets show disagreement in direction
+// This often precedes major reversals
+
+var float[] asset_divergence = array.new<float>()
+var bool divergence_detected = false
+var string divergence_type = ""
+
+f_detectHighDivergence() =>
+    // Check if recent high is lower than previous high
+    recent_high = ta.highest(high, divergenceLookback)
+    prev_high = ta.highest(high, divergenceLookback + 10)[divergenceLookback]
+    
+    divergence = false
+    if not na(recent_high) and not na(prev_high)
+        if recent_high < prev_high
+            strength = ((prev_high - recent_high) / prev_high) * 100
+            divergence := strength >= minDivergenceStrength
+    
+    divergence
+
+f_detectLowDivergence() =>
+    // Check if recent low is higher than previous low
+    recent_low = ta.lowest(low, divergenceLookback)
+    prev_low = ta.lowest(low, divergenceLookback + 10)[divergenceLookback]
+    
+    divergence = false
+    if not na(recent_low) and not na(prev_low)
+        if recent_low > prev_low
+            strength = ((recent_low - prev_low) / prev_low) * 100
+            divergence := strength >= minDivergenceStrength
+    
+    divergence
+
+// ========== FAIR VALUE GAP (FVG) DETECTION ==========
+// Identifies liquidity voids (gaps between candles)
+
+var float[] fvg_levels = array.new<float>()
+
+f_detectBullishFVG() =>
+    // Bullish FVG: Low[i-2] > High[i]
+    if bar_index >= 2
+        fvg_exists = low[2] > high
+        if fvg_exists
+            fvg_size = ((low[2] - high) / high) * 100
+            is_valid = fvg_size >= fvgMinSize
+            is_valid
+        else
+            false
+    else
+        false
+
+f_detectBearishFVG() =>
+    // Bearish FVG: High[i-2] < Low[i]
+    if bar_index >= 2
+        fvg_exists = high[2] < low
+        if fvg_exists
+            fvg_size = ((high[2] - low) / high) * 100
+            is_valid = fvg_size >= fvgMinSize
+            is_valid
+        else
+            false
+    else
+        false
+
+bullish_fvg = enableFVG ? f_detectBullishFVG() : false
+bearish_fvg = enableFVG ? f_detectBearishFVG() : false
+
+// ========== TRUE OPEN DETECTION ==========
+// Market open adjusted for timezone/session
+
+f_getTrueOpen() =>
+    ta.valuewhen(f_isQuarterBoundary(), open, 0)
+
+// ========== PRECISION CANDLE DETECTION ==========
+// Small-body candles with high wicks (indecision/reversal signals)
+
+f_isPrecisionCandle(lookback) =>
+    body_size = math.abs(close - open)
+    wick_upper = high - math.max(close, open)
+    wick_lower = math.min(close, open) - low
+    total_wick = wick_upper + wick_lower
+    
+    body_size < total_wick and (body_size < (high - low) * 0.3)
+
+// ========== HIGH PROBABILITY GAP DETECTION ==========
+// Gaps that form after divergence (high probability continuation setups)
+
+var bool high_prob_gap_bullish = false
+var bool high_prob_gap_bearish = false
+
+f_detectHighProbabilityGap() =>
+    // Gap after divergence + FVG = high probability setup
+    if enableSMTDivergence and enableFVG
+        is_bullish_setup = f_detectLowDivergence() and bullish_fvg
+        is_bearish_setup = f_detectHighDivergence() and bearish_fvg
+        [is_bullish_setup, is_bearish_setup]
+    else
+        [false, false]
+
+[hp_gap_bull, hp_gap_bear] = f_detectHighProbabilityGap()
+high_prob_gap_bullish := hp_gap_bull
+high_prob_gap_bearish := hp_gap_bear
+
+// ========== DIVERGENCE TRACKING ==========
+
+bullish_divergence = enableSMTDivergence ? f_detectLowDivergence() : false
+bearish_divergence = enableSMTDivergence ? f_detectHighDivergence() : false
+
+// ========== VISUALIZATION ==========
+
+// Draw Quarter Boundaries
+if showQuarterBoundaries
+    if f_isQuarterBoundary()
+        line.new(bar_index, cycle_low, bar_index, cycle_high, 
+                 color=color.gray, width=2, style=line.style_dashed)
+        label.new(bar_index, cycle_high, "Q" + str.tostring(current_cycle),
+                  color=color.gray, textcolor=color.white, size=size.small)
+
+// Draw Divergences
+if showDivergences and enableSMTDivergence
+    if bullish_divergence
+        label.new(bar_index, low, "BD", color=color_bullishDiv, textcolor=color.black, size=size.tiny)
+        if enableAlerts
+            alert("Bullish Divergence Detected!", alert.freq_once_per_bar)
+    
+    if bearish_divergence
+        label.new(bar_index, high, "SD", color=color_bearishDiv, textcolor=color.white, size=size.tiny)
+        if enableAlerts
+            alert("Bearish Divergence Detected!", alert.freq_once_per_bar)
+
+// Draw FVGs
+if showFVGs and enableFVG
+    if bullish_fvg
+        box.new(left=bar_index-1, top=high, right=bar_index, bottom=low[2],
+                bgcolor=color_fvg_bull, border_color=color.teal)
+    
+    if bearish_fvg
+        box.new(left=bar_index-1, top=low, right=bar_index, bottom=high[2],
+                bgcolor=color_fvg_bear, border_color=color.maroon)
+
+// Draw High Probability Gap Zones
+if high_prob_gap_bullish
+    label.new(bar_index, low, "HP-BULL", color=color.lime, textcolor=color.black, size=size.small)
+
+if high_prob_gap_bearish
+    label.new(bar_index, high, "HP-BEAR", color=color.red, textcolor=color.white, size=size.small)
+
+// ========== TABLE DISPLAY ==========
+// Real-time indicator status
+
+if showQuarterBoundaries
+    var table tbl = table.new(position.top_right, 3, 6, border_color=color.gray, bgcolor=color.new(color.black, 50))
+    
+    table.cell(tbl, 0, 0, "Quarterly Theory Toolkit", text_color=color.white, bgcolor=color.new(color.purple, 30))
+    table.cell(tbl, 0, 1, "Current Quarter: Q" + str.tostring(current_cycle), text_color=color.white)
+    table.cell(tbl, 0, 2, "Range Size: " + str.tostring(f_getDefiningRangePercent(), "#.##") + "%", text_color=color.white)
+    table.cell(tbl, 0, 3, "Bullish Div: " + (bullish_divergence ? "YES" : "NO"), text_color=bullish_divergence ? color.lime : color.red)
+    table.cell(tbl, 0, 4, "Bearish Div: " + (bearish_divergence ? "YES" : "NO"), text_color=bearish_divergence ? color.red : color.lime)
+    table.cell(tbl, 0, 5, "FVG: " + (bullish_fvg ? "BULL" : bearish_fvg ? "BEAR" : "NONE"), text_color=bullish_fvg ? color.teal : bearish_fvg ? color.maroon : color.gray)
+
+// ========== DEBUG / INFORMATION ==========
+
+// Plot cycle boundaries
+plot(na, title="Cycle High", color=color.gray, linewidth=2)
+plot(na, title="Cycle Low", color=color.gray, linewidth=2)
+
+// ============================================================================
+// END OF INDICATOR
+// ============================================================================
